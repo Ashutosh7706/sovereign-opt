@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage*
+coverage.xml
+junit.xml
+backend/data/
+dist/
+keys/
+certs/
+.env
+*.env
+node_modules/

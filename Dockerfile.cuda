@@ -1,0 +1,19 @@
+# GPU image (audit #102). Needs the NVIDIA Container Toolkit on the host.
+# Build: docker build -f Dockerfile.cuda -t sovereign-optimizer:0.2.0-cuda12 .
+# Run:   docker run --gpus all -p 8000:8000 -v sovdata:/data sovereign-optimizer:0.2.0-cuda12
+# The CUDA runtime version must be <= what the host driver supports (see `nvidia-smi`).
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SOVEREIGN_DATA=/data SOVEREIGN_SKU=SKU-2 PATH=/opt/venv/bin:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv && rm -rf /var/lib/apt/lists/* \
+ && python3 -m venv /opt/venv && useradd --uid 10001 --create-home app && mkdir /data && chown app /data
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt cupy-cuda12x==13.3.0
+COPY backend ./backend
+COPY frontend ./frontend
+USER app
+VOLUME /data
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"
+CMD ["python", "-m", "uvicorn", "app:app", "--app-dir", "backend", "--host", "0.0.0.0", "--port", "8000", "--timeout-graceful-shutdown", "30"]

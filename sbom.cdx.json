@@ -1,0 +1,299 @@
+{
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.5",
+ "serialNumber": "urn:uuid:270713f6-2a20-489e-ad9f-5a1cd537fe77",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-09-30T08:46:22.008063+00:00",
+  "component": {
+   "type": "application",
+   "name": "sovereign-optimizer",
+   "version": "0.3.0"
+  }
+ },
+ "components": [
+  {
+   "type": "library",
+   "name": "annotated-doc",
+   "version": "0.0.4",
+   "purl": "pkg:pypi/annotated-doc@0.0.4",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "annotated-types",
+   "version": "0.7.0",
+   "purl": "pkg:pypi/annotated-types@0.7.0",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "anyio",
+   "version": "4.13.0",
+   "purl": "pkg:pypi/anyio@4.13.0",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "click",
+   "version": "8.2.1",
+   "purl": "pkg:pypi/click@8.2.1",
+   "licenses": [
+    {
+     "expression": "BSD-3-Clause"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "colorama",
+   "version": "0.4.6",
+   "purl": "pkg:pypi/colorama@0.4.6",
+   "licenses": [
+    {
+     "expression": "BSD License"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "fastapi",
+   "version": "0.135.3",
+   "purl": "pkg:pypi/fastapi@0.135.3",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "h11",
+   "version": "0.16.0",
+   "purl": "pkg:pypi/h11@0.16.0",
+   "licenses": [
+    {
+     "expression": "MIT License"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "idna",
+   "version": "3.10",
+   "purl": "pkg:pypi/idna@3.10",
+   "licenses": [
+    {
+     "expression": "BSD-3-Clause"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "numpy",
+   "version": "2.3.2",
+   "purl": "pkg:pypi/numpy@2.3.2",
+   "licenses": [
+    {
+     "expression": "BSD-3-Clause"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "pydantic",
+   "version": "2.12.5",
+   "purl": "pkg:pypi/pydantic@2.12.5",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "pydantic-core",
+   "version": "2.41.5",
+   "purl": "pkg:pypi/pydantic-core@2.41.5",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "scipy",
+   "version": "1.16.0",
+   "purl": "pkg:pypi/scipy@1.16.0",
+   "licenses": [
+    {
+     "expression": "BSD-3-Clause"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "starlette",
+   "version": "1.0.0",
+   "purl": "pkg:pypi/starlette@1.0.0",
+   "licenses": [
+    {
+     "expression": "BSD-3-Clause"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "threadpoolctl",
+   "version": "3.6.0",
+   "purl": "pkg:pypi/threadpoolctl@3.6.0",
+   "licenses": [
+    {
+     "expression": "BSD License"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "typing-extensions",
+   "version": "4.14.1",
+   "purl": "pkg:pypi/typing-extensions@4.14.1",
+   "licenses": [
+    {
+     "expression": "PSF-2.0"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "typing-inspection",
+   "version": "0.4.2",
+   "purl": "pkg:pypi/typing-inspection@0.4.2",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "uvicorn",
+   "version": "0.44.0",
+   "purl": "pkg:pypi/uvicorn@0.44.0",
+   "licenses": [
+    {
+     "expression": "BSD-3-Clause"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "websockets",
+   "version": "15.0.1",
+   "purl": "pkg:pypi/websockets@15.0.1",
+   "licenses": [
+    {
+     "expression": "BSD License"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "react",
+   "version": "18.3.1",
+   "purl": "pkg:npm/react@18.3.1",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ],
+   "properties": [
+    {
+     "name": "vendored",
+     "value": "frontend/vendor/react.js"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "react-dom",
+   "version": "18.3.1",
+   "purl": "pkg:npm/react-dom@18.3.1",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ],
+   "properties": [
+    {
+     "name": "vendored",
+     "value": "frontend/vendor/rdom.js"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "htm",
+   "version": "3.1.1",
+   "purl": "pkg:npm/htm@3.1.1",
+   "licenses": [
+    {
+     "expression": "Apache-2.0"
+    }
+   ],
+   "properties": [
+    {
+     "name": "vendored",
+     "value": "frontend/vendor/htm.js"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "three",
+   "version": "0.128.0",
+   "purl": "pkg:npm/three@0.128.0",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ],
+   "properties": [
+    {
+     "name": "vendored",
+     "value": "frontend/vendor/three.js"
+    }
+   ]
+  },
+  {
+   "type": "library",
+   "name": "three-orbitcontrols (examples/js, r128)",
+   "version": "0.128.0",
+   "purl": "pkg:npm/three-orbitcontrols (examples/js, r128)@0.128.0",
+   "licenses": [
+    {
+     "expression": "MIT"
+    }
+   ],
+   "properties": [
+    {
+     "name": "vendored",
+     "value": "frontend/vendor/orbit.js"
+    }
+   ]
+  }
+ ]
+}

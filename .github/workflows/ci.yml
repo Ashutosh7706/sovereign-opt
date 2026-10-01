@@ -1,0 +1,49 @@
+# CI (audit #30, #66, #70, #107, #110, #113): Windows + Linux, tests + coverage, dependency
+# vulnerability scan, licence gate, SBOM and a shareable HTML test report on every push.
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements-dev.txt
+      - name: tests + coverage
+        working-directory: backend
+        run: python -m pytest tests -q --cov=sovereign --cov-report=term --cov-report=xml --junitxml=junit.xml
+      - name: HTML test report
+        run: python backend/scripts/test_report.py backend/junit.xml docs/TEST_REPORT.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ matrix.os }}-py${{ matrix.python }}
+          path: |
+            docs/TEST_REPORT.html
+            backend/coverage.xml
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt pip-audit
+      - name: vulnerability scan (pip-audit)
+        run: pip-audit -r requirements.txt --strict
+      - name: licence gate
+        run: python backend/scripts/supply_chain.py licenses
+      - name: SBOM
+        run: python backend/scripts/supply_chain.py sbom
+      - name: env vars in code == README table
+        run: python backend/scripts/check_env_docs.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.cdx.json
