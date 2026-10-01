@@ -11,3 +11,7 @@ certs/
 .env
 *.env
 node_modules/
+
+.venv/
+
+setup_log.txt
