@@ -81,11 +81,15 @@ export function Race() {
     const onmsg = ws.onmessage;
     ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.type === "done" || m.type === "error") finished = true; onmsg(ev); };
     ws.onerror = () => {};
-    ws.onclose = (ev) => {
-      setRunning(false);
-      if (!finished) setError(ev.code === 4401 ? "Session expired - please sign in again." :
-        "Connection to the server dropped mid-race. Results received so far are kept; press Start race to retry.");
-    };
+  ws.onclose = () => {
+  setRunning(false);
+
+  if (!finished) {
+    setError(
+      "Connection to the server dropped mid-race. Results received so far are kept; press Start race to retry."
+    );
+  }
+};
   }
 
   async function onFile(e) {

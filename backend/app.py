@@ -25,7 +25,6 @@ from pydantic import BaseModel, ValidationError
 
 from sovereign import baselines, config, device
 from sovereign.audit import AuditLog
-from sovereign.auth import Auth, AuthError
 from sovereign.engine import SOLVER_VERSION, SolverConfig, solve
 from sovereign.infeasibility import explain_infeasibility
 from sovereign import twin
@@ -43,6 +42,12 @@ from sovereign.store import Store
 from sovereign.telemetry import Telemetry
 from sovereign.tolerances import TOL
 
+
+# Authentication/RBAC is disabled for this demo build. Keep the imported
+# gate API intact, but make application-level role checks no-ops.
+def require_role(_role: str, _needed: str, _what: str) -> None:
+    return None
+
 # ------------------------------------------------------------------ boot: validate config, fail fast (#83)
 try:
     SETTINGS = config.load()
@@ -55,28 +60,21 @@ DATA = Path(SETTINGS.data_dir)
 DATA.mkdir(parents=True, exist_ok=True)
 store = Store(DATA / "sovereign.db")
 audit = AuditLog(store, SETTINGS.anchor_dir)
-auth = Auth(store, SETTINGS.session_hours * 3600)
 replays = ReplayStore(store)
 gate = ConstraintGate(audit, cloud_allowed=SETTINGS.cloud_allowed, lan_llm_allowed=SETTINGS.allow_lan_llm)
 metrics = Metrics()
 limiter = RateLimiter(SETTINGS.rate_per_min)
-login_limiter = RateLimiter(10)
 alerter = FailureAlerter(SETTINGS.alert_threshold, SETTINGS.alert_webhook, audit, log)
 STATE = {"inflight": 0, "shutting_down": False, "started": time.time()}
 uploaded: dict[str, Model] = {}
 netlib_refs: dict[str, float] = {}
-COOKIE = "sov_session"
-PUBLIC = {"/health", "/metrics", "/api/auth/login", "/api/auth/me", "/docs", "/openapi.json", "/docs/oauth2-redirect"}
+PUBLIC = {"/health", "/metrics", "/docs", "/openapi.json", "/docs/oauth2-redirect"}
+ANONYMOUS_USER = {"username": "guest", "role": "supervisor"}
 EXPENSIVE = ("/api/plan/", "/api/nl/propose", "/api/models/mps", "/api/netlib/readme", "/api/replays/")
 
 
 @contextlib.asynccontextmanager
 async def lifespan(_app):
-    pin = auth.bootstrap(DATA)
-    if pin:
-        print(f"\n*** FIRST BOOT: created user 'admin' with one-time PIN {pin}  "
-              f"(also in {DATA / 'BOOTSTRAP_ADMIN.txt'}). Change it and delete that file. ***\n", flush=True)
-        audit.append("auth.bootstrap", "system", {"user": "admin", "file": str(DATA / "BOOTSTRAP_ADMIN.txt")})
     event(log, device.boot_report(), gpu=device.describe())
     event(log, "config", sku=SETTINGS.sku, cloud_llm=SETTINGS.cloud_allowed, https=SETTINGS.https,
           data=str(DATA), unknown_env=SETTINGS.unknown_env)
@@ -136,22 +134,9 @@ def clean(o):
 async def security(request: Request, call_next):
     t0 = time.perf_counter()
     path = request.url.path
-    user = None
-    if path.startswith("/api/") and path not in PUBLIC:
-        user = auth.session(request.cookies.get(COOKIE))
-        if user is None:
-            return JSONResponse({"detail": "login required"}, status_code=401)
-        if request.method not in ("GET", "HEAD", "OPTIONS") and \
-                request.headers.get("x-csrf-token") != user["csrf"]:
-            return JSONResponse({"detail": "missing or invalid CSRF token"}, status_code=403)
-        if request.method == "POST" and path.startswith(EXPENSIVE) and not limiter.allow(user["username"]):
-            metrics.inc("sovereign_rate_limited_total", "requests refused by the rate limiter")
-            return JSONResponse({"detail": "rate limit exceeded - slow down"}, status_code=429)
-        cl = request.headers.get("content-length")
-        if cl and cl.isdigit() and int(cl) > SETTINGS.max_upload_mb * 1e6:
-            return JSONResponse({"detail": f"request larger than {SETTINGS.max_upload_mb:g} MB"}, status_code=413)
-        if STATE["shutting_down"] and request.method == "POST":
-            return JSONResponse({"detail": "server is shutting down"}, status_code=503)
+    # Authentication is intentionally disabled for this build.
+    # Every request runs as a local guest with supervisor privileges.
+    user = ANONYMOUS_USER.copy()
     request.state.user = user
     try:
         resp: Response = await call_next(request)
@@ -191,13 +176,8 @@ async def _storage(_r, e):  # fail closed (#33)
                         status_code=503)
 
 
-@app.exception_handler(AuthError)
-async def _autherr(_r, e):
-    return JSONResponse({"detail": str(e)}, status_code=400)
-
-
 def who(request: Request) -> dict:
-    return request.state.user
+    return getattr(request.state, "user", ANONYMOUS_USER.copy())
 
 
 @contextlib.contextmanager
@@ -236,104 +216,22 @@ def get_model(key: str) -> Model:
     raise HTTPException(404, f"unknown model '{key}'")
 
 
-# ------------------------------------------------------------------ auth + users
-class LoginIn(BaseModel):
-    username: str
-    pin: str
-
-
-def _set_cookie(resp: Response, token: str | None):
-    if token is None:
-        resp.delete_cookie(COOKIE, path="/")
-    else:
-        resp.set_cookie(COOKIE, token, httponly=True, samesite="strict", secure=SETTINGS.https,
-                        max_age=int(SETTINGS.session_hours * 3600), path="/")
-
-
+# ------------------------------------------------------------------ authentication compatibility
+# Authentication is disabled. These endpoints remain only so an older frontend
+# can continue to initialize without displaying a login screen.
 @app.post("/api/auth/login")
-def login(body: LoginIn, request: Request):
-    ip = request.client.host if request.client else "?"
-    if not login_limiter.allow(f"login:{ip}"):
-        raise HTTPException(429, "too many login attempts from this address")
-    try:
-        token, user = auth.login(body.username, body.pin)
-    except AuthError as e:
-        audit.append("auth.login_failed", body.username[:40] or "?", {"ip": ip, "reason": str(e)})
-        metrics.inc("sovereign_login_failures_total", "failed logins")
-        raise HTTPException(401, str(e))
-    audit.append("auth.login", user["username"], {"ip": ip, "role": user["role"]})
-    resp = JSONResponse(user)
-    _set_cookie(resp, token)
-    return resp
+def login_compat():
+    return ANONYMOUS_USER.copy()
 
 
 @app.post("/api/auth/logout")
-def logout(request: Request):
-    auth.logout(request.cookies.get(COOKIE))
-    audit.append("auth.logout", who(request)["username"], {})
-    resp = JSONResponse({"ok": True})
-    _set_cookie(resp, None)
-    return resp
-
-
-@app.get("/api/auth/me")
-def me(request: Request):
-    u = auth.session(request.cookies.get(COOKIE))
-    if u is None:
-        raise HTTPException(401, "not logged in")
-    return u
-
-
-class UserIn(BaseModel):
-    username: str
-    pin: str
-    role: str = "operator"
-
-
-@app.get("/api/users")
-def users(request: Request):
-    require_role(who(request)["role"], "admin", "listing users")
-    return auth.list_users()
-
-
-@app.post("/api/users")
-def create_user(body: UserIn, request: Request):
-    u = who(request)
-    require_role(u["role"], "admin", "creating users")
-    created = auth.create_user(body.username, body.pin, body.role)
-    audit.append("auth.user_created", u["username"], created)
-    return created
-
-
-class EnableIn(BaseModel):
-    disabled: bool
-
-
-@app.post("/api/users/{username}/disabled")
-def set_disabled(username: str, body: EnableIn, request: Request):
-    u = who(request)
-    require_role(u["role"], "admin", "disabling users")
-    if username == u["username"]:
-        raise HTTPException(400, "you cannot disable yourself")
-    auth.set_disabled(username, body.disabled)
-    audit.append("auth.user_disabled" if body.disabled else "auth.user_enabled", u["username"], {"user": username})
+def logout_compat():
     return {"ok": True}
 
 
-class PinIn(BaseModel):
-    old_pin: str
-    new_pin: str
-
-
-@app.post("/api/users/me/pin")
-def change_pin(body: PinIn, request: Request):
-    u = who(request)
-    auth.login(u["username"], body.old_pin)  # re-authenticate (raises AuthError on a wrong PIN)
-    auth.set_pin(u["username"], body.new_pin)
-    audit.append("auth.pin_changed", u["username"], {})
-    resp = JSONResponse({"ok": True, "detail": "PIN changed - please log in again"})
-    _set_cookie(resp, None)
-    return resp
+@app.get("/api/auth/me")
+def me_compat():
+    return ANONYMOUS_USER.copy()
 
 
 # ------------------------------------------------------------------ ops: health + metrics (#77, #78, #82)
@@ -361,7 +259,14 @@ def health():
             "database": {"ok": db_ok, "schema_version": store.schema_version()},
             "audit": chain, "disk": {**disk, "data_dir_mb": dir_size_mb(DATA)},
             "compute": device.boot_report(), "gpu_fallbacks": GPU_FALLBACKS, "solver_alert": alerter.active_alert}
-
+@app.get("/api/solvers")
+def solvers():
+    return {
+        "status": "available",
+        "solver_version": SOLVER_VERSION,
+        "device": device.describe(),
+        "gpu_fallbacks": GPU_FALLBACKS,
+    }
 
 @app.get("/metrics", response_class=PlainTextResponse)
 def prom():
@@ -462,20 +367,23 @@ TELEMETRY = Telemetry()
 
 
 async def ws_accept(ws: WebSocket, rate_limited: bool = True):
-    """Session + same-origin check for every WebSocket (audit #28); returns the user or None."""
-    user = auth.session(ws.cookies.get(COOKIE))
+    """Accept a WebSocket without session authentication.
+
+    A lightweight same-origin check is retained when the browser supplies both
+    Origin and Host headers. This is not authentication; it only reduces
+    accidental cross-site WebSocket use.
+    """
     origin = ws.headers.get("origin")
     host = ws.headers.get("host")
-    if user is None or (origin and host and origin.split("://", 1)[-1] != host):
-        await ws.close(code=4401)  # no session, or cross-site WebSocket hijacking attempt
+    if origin and host and origin.split("://", 1)[-1] != host:
+        await ws.close(code=1008)
         return None
     await ws.accept()
-    if rate_limited and not limiter.allow(user["username"]):
+    if rate_limited and not limiter.allow(ANONYMOUS_USER["username"]):
         await ws.send_json({"type": "error", "message": "rate limit exceeded - slow down"})
         await ws.close()
         return None
-    return user
-
+    return ANONYMOUS_USER.copy()
 
 async def pump_queue(ws: WebSocket, task, queue: asyncio.Queue):
     while not task.done() or not queue.empty():
@@ -486,7 +394,7 @@ async def pump_queue(ws: WebSocket, task, queue: asyncio.Queue):
             pass
 
 
-# ------------------------------------------------------------------ the race (WebSocket, authenticated #28)
+# ------------------------------------------------------------------ the race (WebSocket, authentication-free)
 @app.websocket("/ws/race")
 async def race(ws: WebSocket):
     user = await ws_accept(ws)
@@ -594,6 +502,7 @@ async def race(ws: WebSocket):
     except HTTPException as e:
         await ws.send_json({"type": "error", "message": e.detail})
     except Exception as e:  # surface solver errors to the UI instead of dropping the socket
+        log.exception("race failed")
         event(log, "race failed", logging.ERROR, error=f"{type(e).__name__}: {e}")
         await ws.send_json({"type": "error", "message": f"{type(e).__name__}: {e}"})
 

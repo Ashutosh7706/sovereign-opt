@@ -64,18 +64,52 @@ def run_highs(model: Model, time_limit: float = 120) -> dict:
             "objective": model.display_objective(obj) if obj is not None else None,
             "note": "open-source; HiGHS chooses its algorithm" + ("" if model.is_mip else " (simplex for most LPs)")}
 
-
 def run_highs_ipm(model: Model, time_limit: float = 120) -> dict:
-    """HiGHS forced onto its own interior-point method - the like-for-like comparison for an IPM."""
-    ipm_model = model
+    """Run HiGHS using the interior-point method for continuous LPs.
+
+    MIP models such as refinery are not applicable to HiGHS-IPM.
+    """
+    if model.is_mip:
+        return {
+            "lane": "highs_ipm",
+            "name": "HiGHS (IPM)",
+            "status": "not applicable",
+            "objective": None,
+            "seconds": None,
+        }
+
     t0 = time.perf_counter()
-    r = _linprog(ipm_model, "highs-ipm", time_limit)
+    r = _linprog(model, "highs-ipm", time_limit)
     dt = time.perf_counter() - t0
-    status = {0: "optimal", 1: "time_limit", 2: "infeasible", 3: "unbounded", 4: "error"}.get(r.status, "error")
-    obj = float(r.fun + model.obj_const) if r.x is not None and r.fun is not None else None
-    return {"lane": "highs_ipm", "name": "HiGHS (IPM)", "status": status, "seconds": dt,
-            "objective": model.display_objective(obj) if obj is not None else None,
-            "note": "HiGHS interior-point + crossover: the like-for-like IPM comparison"}
+
+    status = {
+        0: "optimal",
+        1: "time_limit",
+        2: "infeasible",
+        3: "unbounded",
+        4: "error",
+    }.get(r.status, "error")
+
+    obj = (
+        float(r.fun + model.obj_const)
+        if r.x is not None and r.fun is not None
+        else None
+    )
+
+    return {
+        "lane": "highs_ipm",
+        "name": "HiGHS (IPM)",
+        "status": status,
+        "seconds": dt,
+        "objective": (
+            model.display_objective(obj)
+            if obj is not None
+            else None
+        ),
+        "note": "open-source; HiGHS interior-point method",
+    }
+
+    # existing run_highs_ipm code continues below...
 
 
 def _gurobi_model(model: Model, gp, GRB):

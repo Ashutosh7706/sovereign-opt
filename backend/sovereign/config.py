@@ -34,7 +34,6 @@ ENV = {  # env var -> (field, description)
     "SOVEREIGN_ALERT_THRESHOLD": ("alert_threshold", "consecutive failures before an alert"),
     "SOVEREIGN_DISK_WARN_GB": ("disk_warn_gb", "free-space warning threshold for the data dir"),
     "SOVEREIGN_MAX_UPLOAD_MB": ("max_upload_mb", "MPS / readme upload size cap"),
-    "SOVEREIGN_SESSION_HOURS": ("session_hours", "login session lifetime"),
     "SOVEREIGN_HTTPS": ("https", "1 when served over TLS (sets Secure cookies)"),
     "SOVEREIGN_RATE_PER_MIN": ("rate_per_min", "expensive calls per user per minute"),
     "SOVEREIGN_LOG_FORMAT": ("log_format", "json (default) or text"),
@@ -61,7 +60,6 @@ class Settings(BaseModel):
     alert_threshold: int = Field(3, ge=1, le=100)
     disk_warn_gb: float = Field(2.0, ge=0)
     max_upload_mb: float = Field(50.0, gt=0, le=2048)
-    session_hours: float = Field(12.0, gt=0, le=168)
     https: bool = False
     rate_per_min: int = Field(30, ge=1, le=10000)
     log_format: Literal["json", "text"] = "json"

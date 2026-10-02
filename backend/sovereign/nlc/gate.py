@@ -295,10 +295,20 @@ class PermissionDenied(PermissionError):
     pass
 
 
-def require_role(role: str, needed: str, what: str) -> None:
-    if ROLE_RANK.get(role, 0) < ROLE_RANK[needed]:
-        raise PermissionDenied(f"{what} requires the {needed} role (you are {role or 'unauthenticated'})")
+def require_role(role, required, action):
+    hierarchy = {
+        "operator": 0,
+        "supervisor": 1,
+    }
 
+    actual = hierarchy.get(role, -1)
+    needed = hierarchy.get(required, 0)
+
+    if actual < needed:
+        raise PermissionDenied(
+            f"{role} is not authorized for {action}; "
+            f"{required} role required"
+        )
 
 @dataclass
 class ActiveConstraint:

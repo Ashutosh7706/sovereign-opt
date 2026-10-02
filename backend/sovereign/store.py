@@ -16,7 +16,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MIGRATIONS: dict[int, list[str]] = {
     1: [
         """CREATE TABLE IF NOT EXISTS audit (
@@ -30,16 +30,15 @@ MIGRATIONS: dict[int, list[str]] = {
         "CREATE TABLE IF NOT EXISTS models (fingerprint TEXT PRIMARY KEY, body TEXT NOT NULL)",
     ],
     2: [
-        """CREATE TABLE IF NOT EXISTS users (
-             username TEXT PRIMARY KEY, role TEXT NOT NULL, salt TEXT NOT NULL, pin_hash TEXT NOT NULL,
-             created TEXT NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, failed INTEGER NOT NULL DEFAULT 0,
-             locked_until REAL NOT NULL DEFAULT 0)""",
-        """CREATE TABLE IF NOT EXISTS sessions (
-             token_hash TEXT PRIMARY KEY, username TEXT NOT NULL, csrf TEXT NOT NULL,
-             created REAL NOT NULL, expires REAL NOT NULL)""",
         """CREATE TABLE IF NOT EXISTS anchors (
              id INTEGER PRIMARY KEY, ts TEXT NOT NULL, seq INTEGER NOT NULL, hash TEXT NOT NULL,
              destination TEXT NOT NULL)""",
+    ],
+    3: [
+        # Authentication was removed from the no-login build.
+        # Drop legacy authentication tables from databases created by older versions.
+        "DROP TABLE IF EXISTS sessions",
+        "DROP TABLE IF EXISTS users",
     ],
 }
 

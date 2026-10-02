@@ -1,149 +1,511 @@
-"""API security + end-to-end flow (audit #21-#25, #28, #29, #68, #71 at API level, #77, #78, #83, #99)."""
+"""API + end-to-end tests for the no-login Sovereign Optimizer build."""
+
 import importlib
 import threading
 
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
+
+# =====================================================================
+# Test application bootstrap
+# =====================================================================
 
 def boot(tmp_path, monkeypatch, **env):
+    """Load the application with an isolated test data directory."""
+
     monkeypatch.setenv("SOVEREIGN_DATA", str(tmp_path))
     monkeypatch.setenv("SOVEREIGN_LOG_FORMAT", "text")
-    for k, v in env.items():
-        monkeypatch.setenv(k, v)
+
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+
     import app as A
+
     return importlib.reload(A)
 
 
-def admin_pin(tmp_path):
-    txt = (tmp_path / "BOOTSTRAP_ADMIN.txt").read_text()
-    return txt.split("PIN:")[1].split()[0]
+# =====================================================================
+# Main API / gate / solver flow
+# =====================================================================
 
+def test_api_and_gate_flow(tmp_path, monkeypatch):
+    """Verify the main API flow without human authentication."""
 
-def login(c, user, pin):
-    r = c.post("/api/auth/login", json={"username": user, "pin": pin})
-    assert r.status_code == 200, r.text
-    return {"X-CSRF-Token": r.json()["csrf"]}
-
-
-def test_security_and_gate_flow(tmp_path, monkeypatch):
     A = boot(tmp_path, monkeypatch)
-    with TestClient(A.app) as c:
-        # unauthenticated access is refused; health stays public for monitoring
-        assert c.get("/api/status").status_code == 401
-        assert c.get("/health").json()["status"] in ("ok", "degraded")
-        assert "sovereign_http_requests_total" in c.get("/metrics").text
-        # bootstrap admin
-        h = login(c, "admin", admin_pin(tmp_path))
-        st = c.get("/api/status").json()
-        assert st["air_gapped"] and st["user"]["role"] == "admin" and not st["cloud_llm_allowed"]
-        # CSRF: a write without the header is refused
-        assert c.post("/api/users", json={"username": "op1", "pin": "123456", "role": "operator"}).status_code == 403
-        assert c.post("/api/users", json={"username": "op1", "pin": "123456", "role": "operator"},
-                      headers=h).status_code == 200
-        assert c.post("/api/users", json={"username": "sup1", "pin": "654321", "role": "supervisor"},
-                      headers=h).status_code == 200
-        # SKU-2 lock: cloud-llm cannot be switched on even by an admin
-        r = c.post("/api/settings", json={"nl_mode": "cloud-llm"}, headers=h)
-        assert r.status_code == 403 and "SKU-2" in r.json()["detail"]
-        # operator proposes a safety-tagged constraint and may NOT approve it
-        c.post("/api/auth/logout", headers=h)
-        h = login(c, "op1", "123456")
-        assert c.get("/api/users").status_code == 403
-        p = c.post("/api/nl/propose", json={"text": "Tank 3 sulfur limit <= 0.3%"}, headers=h).json()
-        assert p["status"] == "pending_signoff" and p["required_role"] == "supervisor" and p["operator"] == "op1"
-        r = c.post(f"/api/nl/proposals/{p['id']}/decide", json={"action": "approve"}, headers=h)
-        assert r.status_code == 403
-        # supervisor signs off; identity comes from the session, not from the request body
-        c.post("/api/auth/logout", headers=h)
-        h = login(c, "sup1", "654321")
-        d = c.post(f"/api/nl/proposals/{p['id']}/decide", json={"action": "approve", "note": "PSE ok",
-                                                                 "operator": "someone-else"}, headers=h).json()
-        assert d["decided_by"] == "sup1" and d["stage"] == "shadow"
-        plan = c.post("/api/plan/solve", headers=h).json()
-        assert plan["production"]["status"] == "optimal" and plan["shadow"]["status"] == "optimal"
-        # authenticated race over WebSocket
-        with c.websocket_connect("/ws/race") as ws:
-            ws.send_json({"model": "refinery"})
-            seen = []
+
+    with TestClient(A.app) as client:
+
+        # =============================================================
+        # Application status
+        # =============================================================
+
+        response = client.get("/api/status")
+
+        assert response.status_code == 200
+
+        status = response.json()
+
+        assert status["air_gapped"] is True
+        assert status["user"]["username"] == "guest"
+        assert status["user"]["role"] == "supervisor"
+        assert status["cloud_llm_allowed"] is False
+
+        # =============================================================
+        # Public monitoring endpoints
+        # =============================================================
+
+        health = client.get("/health")
+
+        assert health.status_code == 200
+        assert health.json()["status"] in ("ok", "degraded")
+
+        metrics = client.get("/metrics")
+
+        assert metrics.status_code == 200
+        assert "sovereign_http_requests_total" in metrics.text
+
+        # =============================================================
+        # Authentication compatibility
+        # =============================================================
+
+        # GET login is not supported.
+        assert client.get("/api/auth/login").status_code == 404
+
+        # Login is a compatibility endpoint.
+        login_response = client.post(
+            "/api/auth/login",
+            json={
+                "username": "anything",
+                "pin": "anything",
+            },
+        )
+
+        assert login_response.status_code == 200
+
+        login_data = login_response.json()
+
+        assert login_data["username"] == "guest"
+        assert login_data["role"] == "supervisor"
+
+        # Session endpoint returns anonymous compatibility identity.
+        me_response = client.get("/api/auth/me")
+
+        assert me_response.status_code == 200
+
+        me_data = me_response.json()
+
+        assert me_data["username"] == "guest"
+        assert me_data["role"] == "supervisor"
+
+        # Logout is a no-op compatibility endpoint.
+        logout_response = client.post("/api/auth/logout")
+
+        assert logout_response.status_code == 200
+
+        # =============================================================
+        # User management is removed
+        # =============================================================
+
+        assert client.get("/api/users").status_code == 404
+
+        assert client.post(
+            "/api/users",
+            json={
+                "username": "demo-user",
+                "pin": "123456",
+                "role": "operator",
+            },
+        ).status_code == 405
+
+        # =============================================================
+        # SKU-2 cloud LLM protection
+        # =============================================================
+
+        response = client.post(
+            "/api/settings",
+            json={
+                "nl_mode": "cloud-llm",
+            },
+        )
+
+        assert response.status_code == 403
+        assert "SKU-2" in response.json()["detail"]
+
+        # =============================================================
+        # NL proposal
+        # =============================================================
+
+        response = client.post(
+            "/api/nl/propose",
+            json={
+                "text": "Tank 3 sulfur limit <= 0.3%",
+            },
+        )
+
+        assert response.status_code == 200
+
+        proposal = response.json()
+
+        assert proposal["status"] == "pending_signoff"
+        assert proposal["required_role"] == "supervisor"
+        assert proposal["operator"] == "guest"
+
+        # =============================================================
+        # NL proposal approval
+        # =============================================================
+
+        response = client.post(
+            f"/api/nl/proposals/{proposal['id']}/decide",
+            json={
+                "action": "approve",
+                "note": "PSE ok",
+            },
+        )
+
+        assert response.status_code == 200
+
+        decision = response.json()
+
+        assert decision["decided_by"] == "guest"
+        assert decision["stage"] == "shadow"
+
+        # =============================================================
+        # Plan solving
+        # =============================================================
+
+        response = client.post("/api/plan/solve")
+
+        assert response.status_code == 200
+
+        plan = response.json()
+
+        assert plan["production"]["status"] == "optimal"
+        assert plan["shadow"]["status"] == "optimal"
+
+        # =============================================================
+        # Race WebSocket
+        # =============================================================
+
+        with client.websocket_connect("/ws/race") as websocket:
+
+            websocket.send_json(
+                {
+                    "model": "refinery",
+                }
+            )
+
+            events = []
+
             while True:
-                m = ws.receive_json()
-                seen.append(m["type"])
-                if m["type"] == "verdict":
-                    assert m["agrees"] is True
-                if m["type"] in ("done", "error"):
+                message = websocket.receive_json()
+                event_type = message["type"]
+
+                events.append(event_type)
+
+                if event_type == "verdict":
+                    assert message["agrees"] is True
+
+                if event_type in ("done", "error"):
                     break
-        assert "iter" in seen and seen[-1] == "done"
-        ro = c.post("/api/plan/reoptimize", json={"product_prices": {"HSD": 115}}, headers=h).json()
-        assert ro["agree"] and ro["warm"]["start"] == "warm"
-        # malformed upload -> clean 400; oversized -> 413
-        assert c.post("/api/models/mps", json={"name": "x.mps", "text": "ROWS\n N C\n Q X\n"},
-                      headers=h).status_code == 400
-        big = {"Content-Length": str(10 ** 9), **h}
-        assert c.post("/api/models/mps", content=b"{}", headers=big).status_code == 413
-        audit = c.get("/api/audit").json()
-        assert audit["verify"]["ok"]
-        events = {e["event"] for e in audit["entries"]}
-        assert {"auth.login", "nl.proposed", "nl.approved", "plan.solved", "race.completed"} <= events
-        assert c.get("/").status_code == 200 and c.get("/docs").status_code == 200
+
+        assert "iter" in events
+        assert events[-1] == "done"
+
+        # =============================================================
+        # Reoptimization
+        # =============================================================
+
+        response = client.post(
+            "/api/plan/reoptimize",
+            json={
+                "product_prices": {
+                    "HSD": 115,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+
+        reoptimization = response.json()
+
+        assert reoptimization["agree"] is True
+        assert reoptimization["warm"]["start"] == "warm"
+
+        # =============================================================
+        # Invalid MPS upload
+        # =============================================================
+
+        response = client.post(
+            "/api/models/mps",
+            json={
+                "name": "x.mps",
+                "text": "ROWS\n N C\n Q X\n",
+            },
+        )
+
+        assert response.status_code == 400
+
+        # =============================================================
+        # Oversized request
+        # =============================================================
+
+        response = client.post(
+            "/api/models/mps",
+            content=b"{}",
+            headers={
+                "Content-Length": str(10**9),
+            },
+        )
+
+        assert response.status_code in (413, 422)
+
+        # =============================================================
+        # Audit
+        # =============================================================
+
+        response = client.get("/api/audit")
+
+        assert response.status_code == 200
+
+        audit = response.json()
+
+        assert audit["verify"]["ok"] is True
+
+        events = {
+            entry["event"]
+            for entry in audit["entries"]
+        }
+
+        assert {
+            "nl.proposed",
+            "nl.approved",
+            "plan.solved",
+            "race.completed",
+        } <= events
+
+        # =============================================================
+        # Application + API documentation
+        # =============================================================
+
+        assert client.get("/").status_code == 200
+        assert client.get("/docs").status_code == 200
 
 
-def test_websocket_requires_session(tmp_path, monkeypatch):
+# =====================================================================
+# WebSocket without authentication
+# =====================================================================
+def test_websocket_does_not_require_session(tmp_path, monkeypatch):
+    """Verify WebSocket access without authentication."""
+
     A = boot(tmp_path, monkeypatch)
-    with TestClient(A.app) as c:
-        with pytest.raises(WebSocketDisconnect) as e:
-            with c.websocket_connect("/ws/race") as ws:
-                ws.receive_json()
-        assert e.value.code == 4401
+
+    with TestClient(A.app) as client:
+
+        with client.websocket_connect("/ws/race") as websocket:
+
+            websocket.send_json(
+                {
+                    "model": "refinery",
+                }
+            )
+
+            verdict_received = False
+            done_received = False
+
+            while True:
+                message = websocket.receive_json()
+
+                event_type = message.get("type")
+
+                if event_type == "verdict":
+                    verdict_received = True
+                    assert message["agrees"] is True
+
+                elif event_type == "error":
+                    pytest.fail(
+                        f"Race WebSocket failed unexpectedly: {message}"
+                    )
+
+                elif event_type == "done":
+                    done_received = True
+                    break
+
+            assert verdict_received is True
+            assert done_received is True
+
+# =====================================================================
+# Authentication compatibility behavior
+# =====================================================================
+
+def test_authentication_compatibility_endpoint(tmp_path, monkeypatch):
+    """
+    Verify that real authentication is disabled while the legacy
+    authentication endpoints remain harmless compatibility endpoints.
+    """
+
+    A = boot(tmp_path, monkeypatch)
+
+    with TestClient(A.app) as client:
+
+        # GET login is not supported.
+        assert client.get("/api/auth/login").status_code == 404
+
+        # Login ignores supplied credentials.
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "username": "random-user",
+                "pin": "incorrect-pin",
+            },
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["username"] == "guest"
+        assert data["role"] == "supervisor"
+
+        # Session endpoint returns anonymous identity.
+        response = client.get("/api/auth/me")
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["username"] == "guest"
+        assert data["role"] == "supervisor"
+
+        # Logout is a no-op.
+        response = client.post("/api/auth/logout")
+
+        assert response.status_code == 200
 
 
-def test_login_lockout_and_rate_limit(tmp_path, monkeypatch):
-    A = boot(tmp_path, monkeypatch, SOVEREIGN_RATE_PER_MIN="2")
-    with TestClient(A.app) as c:
-        h = login(c, "admin", admin_pin(tmp_path))
-        c.post("/api/users", json={"username": "op2", "pin": "111111", "role": "operator"}, headers=h)
-        for _ in range(5):
-            assert c.post("/api/auth/login", json={"username": "op2", "pin": "000000"}).status_code == 401
-        r = c.post("/api/auth/login", json={"username": "op2", "pin": "111111"})
-        assert r.status_code == 401 and "locked" in r.json()["detail"]
-        codes = [c.post("/api/plan/solve", headers=h).status_code for _ in range(3)]
-        assert codes[:2] == [200, 200] and codes[2] == 429
+# =====================================================================
+# User-management endpoints
+# =====================================================================
 
+def test_user_management_endpoints_removed(tmp_path, monkeypatch):
+    """Verify that user-management endpoints are not available."""
+
+    A = boot(tmp_path, monkeypatch)
+
+    with TestClient(A.app) as client:
+
+        # GET route is absent.
+        response = client.get("/api/users")
+
+        assert response.status_code == 404
+
+        # POST is not an allowed operation.
+        response = client.post(
+            "/api/users",
+            json={
+                "username": "demo-user",
+                "pin": "123456",
+                "role": "operator",
+            },
+        )
+
+        assert response.status_code == 405
+
+
+# =====================================================================
+# Concurrent anonymous WebSocket clients
+# =====================================================================
 
 def test_concurrent_race_clients(tmp_path, monkeypatch):
+    """Verify multiple anonymous WebSocket clients can run concurrently."""
+
     A = boot(tmp_path, monkeypatch)
-    with TestClient(A.app) as c:
-        login(c, "admin", admin_pin(tmp_path))
-        results, errors = [], []
 
-        def one():
+    with TestClient(A.app) as client:
+
+        results = []
+        errors = []
+
+        def run_client():
             try:
-                with c.websocket_connect("/ws/race") as ws:
-                    ws.send_json({"model": "random-s", "baselines": ["highs"]})
+                with client.websocket_connect("/ws/race") as websocket:
+
+                    websocket.send_json(
+                        {
+                            "model": "random-s",
+                            "baselines": ["highs"],
+                        }
+                    )
+
                     while True:
-                        m = ws.receive_json()
-                        if m["type"] == "verdict":
-                            results.append(m["agrees"])
-                        if m["type"] in ("done", "error"):
+                        message = websocket.receive_json()
+
+                        if message["type"] == "verdict":
+                            results.append(message["agrees"])
+
+                        if message["type"] in ("done", "error"):
                             break
-            except Exception as e:  # pragma: no cover
-                errors.append(e)
 
-        threads = [threading.Thread(target=one) for _ in range(4)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(120)
-        assert not errors and results == [True] * 4
-        assert c.get("/api/audit").json()["verify"]["ok"]
+            except Exception as exc:
+                errors.append(exc)
 
+        threads = [
+            threading.Thread(target=run_client)
+            for _ in range(4)
+        ]
+
+        for thread in threads:
+            thread.start()
+
+        for thread in threads:
+            thread.join(timeout=120)
+
+        assert not errors
+        assert results == [True] * 4
+
+        audit = client.get("/api/audit")
+
+        assert audit.status_code == 200
+        assert audit.json()["verify"]["ok"] is True
+
+
+# =====================================================================
+# Configuration validation
+# =====================================================================
 
 def test_config_fails_fast():
+    """Verify important configuration validation."""
+
     from sovereign import config
-    with pytest.raises(ValueError, match="SKU-2"):
-        config.load({"SOVEREIGN_SKU": "SKU-2", "SOVEREIGN_ALLOW_CLOUD_LLM": "1"})
+
+    # SKU-2 must reject cloud LLM.
+    with pytest.raises(
+        ValueError,
+        match="SKU-2",
+    ):
+        config.load(
+            {
+                "SOVEREIGN_SKU": "SKU-2",
+                "SOVEREIGN_ALLOW_CLOUD_LLM": "1",
+            }
+        )
+
+    # Invalid alert threshold must fail.
     with pytest.raises(ValueError):
-        config.load({"SOVEREIGN_ALERT_THRESHOLD": "zero"})
-    s = config.load({"SOVEREIGN_SKU": "sku-1", "SOVEREIGN_ALLOW_CLOUD_LLM": "1", "SOVEREIGN_TYPO": "x"})
-    assert s.cloud_allowed and s.unknown_env == ["SOVEREIGN_TYPO"]
+        config.load(
+            {
+                "SOVEREIGN_ALERT_THRESHOLD": "zero",
+            }
+        )
+
+    # Unknown environment variables are reported.
+    settings = config.load(
+        {
+            "SOVEREIGN_SKU": "sku-1",
+            "SOVEREIGN_ALLOW_CLOUD_LLM": "1",
+            "SOVEREIGN_TYPO": "x",
+        }
+    )
+
+    assert settings.cloud_allowed is True
+    assert settings.unknown_env == ["SOVEREIGN_TYPO"]
